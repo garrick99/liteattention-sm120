@@ -675,6 +675,11 @@ setup(
     install_requires=[
         "torch",
         "einops",
+        "structlog",
+        "tomli-w",
+    ],
+    setup_requires=[
+        "torch",
         "packaging",
         "ninja",
     ],
