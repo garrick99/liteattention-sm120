@@ -157,13 +157,13 @@ def _write_ninja_file(
         flags.append(f"cuda_cflags = {' '.join(cuda_cflags)}")
         flags.append(f"cuda_post_cflags = {' '.join(cuda_post_cflags)}")
         cuda_post_cflags_sm80 = [
-            s if s != "arch=compute_90a,code=sm_90a" else "arch=compute_80,code=sm_80"
+            s if s != "arch=compute_90a,code=sm_90a" else "arch=compute_120,code=sm_120"
             for s in cuda_post_cflags
         ]
         flags.append(f"cuda_post_cflags_sm80 = {' '.join(cuda_post_cflags_sm80)}")
         cuda_post_cflags_sm80_sm90 = cuda_post_cflags + [
             "-gencode",
-            "arch=compute_80,code=sm_80",
+            "arch=compute_120,code=sm_120",
         ]
         flags.append(
             f"cuda_post_cflags_sm80_sm90 = {' '.join(cuda_post_cflags_sm80_sm90)}"
@@ -639,6 +639,12 @@ if not SKIP_CUDA_BUILD:
         + (sources_bwd_sm80 if not DISABLE_SM8x else [])
         + sources_bwd_sm90
     )
+    # INT8 skipable SM90 instantiations (missing from auto-generation)
+    if not DISABLE_INT8:
+        sources += [
+            f"{SRC_DIR}/instantiations/flash_fwd_hdim{hdim}_int8_skipable_sm90.cu"
+            for hdim in HEAD_DIMENSIONS_FWD
+        ]
     if not DISABLE_SPLIT:
         sources += [f"{SRC_DIR}/_internal/cpp/flash_fwd_combine.cu"]
     sources += [f"{SRC_DIR}/_internal/cpp/flash_prepare_scheduler.cu"]

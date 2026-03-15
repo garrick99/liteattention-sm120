@@ -440,7 +440,7 @@
  }
  
  inline bool get_pagedkv_tma(Flash_fwd_params const& params) {
-     if (params.arch < 90 || !params.page_table || params.leftpad_k || params.knew_ptr) { return false; }
+     if ((params.arch < 90 || params.arch >= 120) || !params.page_table || params.leftpad_k || params.knew_ptr) { return false; }
      // This needs to match the kernel configs
      auto kBlockMN_kernel_args_sm90 = tile_size_fwd_sm90(params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, false /*v_colmajor*/, false /*paged_kv_non_TMA*/, params.softcap > 0.f, params.is_skipable, params.is_int8);
      int const kBlockM = std::get<0>(kBlockMN_kernel_args_sm90);
@@ -453,7 +453,7 @@
  inline bool get_pack_gqa(Flash_fwd_params const& params) {
      // Always enable PackGQA for Sm8x or PagedKVNonTMA or Split to reduce compilation and binary size.
      // Has little effect on speed.
-     if (params.arch < 90 || (params.page_table && !params.pagedkv_tma) || params.num_splits > 1) { return true; }
+     if ((params.arch < 90 || params.arch >= 120) || (params.page_table && !params.pagedkv_tma) || params.num_splits > 1) { return true; }
      #ifdef FLASHATTENTION_DISABLE_PACKGQA
      return false;
      #else
@@ -477,9 +477,9 @@
      auto kBlockMN_kernel_args_sm90 = tile_size_fwd_sm90(params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, false /*v_colmajor*/, params.page_table && !params.pagedkv_tma, params.softcap > 0.f, params.is_skipable, params.is_int8);
      // Strictly speaking we need to pass in (varlen && params.num_splits > 1) but num_splits
      // has not been set here. It's OK though because we might just underestimate kBlockN a bit
-     auto kBlockMN_kernel_args_sm8x = tile_size_fwd_sm8x(params.arch == 86 || params.arch == 89, params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, params.page_table, varlen, params.softcap > 0.f, params.knew_ptr);
-     int const kBlockM = params.arch >= 90 ? std::get<0>(kBlockMN_kernel_args_sm90) : std::get<0>(kBlockMN_kernel_args_sm8x);
-     int const kBlockN = params.arch >= 90 ? std::get<1>(kBlockMN_kernel_args_sm90) : std::get<1>(kBlockMN_kernel_args_sm8x);
+     auto kBlockMN_kernel_args_sm8x = tile_size_fwd_sm8x(params.arch == 86 || params.arch == 89 || params.arch == 120, params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, params.page_table, varlen, params.softcap > 0.f, params.knew_ptr);
+     int const kBlockM = (params.arch >= 90 && params.arch < 120) ? std::get<0>(kBlockMN_kernel_args_sm90) : std::get<0>(kBlockMN_kernel_args_sm8x);
+     int const kBlockN = (params.arch >= 90 && params.arch < 120) ? std::get<1>(kBlockMN_kernel_args_sm90) : std::get<1>(kBlockMN_kernel_args_sm8x);
      int seqlen_q_packgqa = params.seqlen_q * (params.h / params.h_k);
      // If is_local, we're not going to load all of seqlen_k
      int const seqlen_k_loaded = !params.is_local
@@ -648,7 +648,7 @@
      auto opts = seqused_k.options();
      // This needs to be set after get_num_splits
      at::Tensor tile_count_semaphore;  // Contains the semaphore and optionally num_splits_dynamic
-     bool const scheduler_needs_semaphore = params.arch >= 90 || params.num_splits > 1;
+     bool const scheduler_needs_semaphore = (params.arch >= 90 && params.arch < 120) || params.num_splits > 1;
      auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
      params.varlen_sort_batches = !params.is_local; // Use this value for Sort in scheduler template
      params.head_swizzle = params.is_causal || params.is_local; // Use this value for LPT in scheduler template
@@ -679,9 +679,9 @@
  
      if (use_prepare_varlen) {
          auto kBlockMN_kernel_args_sm90 = tile_size_fwd_sm90(params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, false /*v_colmajor*/, params.page_table && !params.pagedkv_tma, params.softcap > 0.f, params.is_skipable, params.is_int8);
-         auto kBlockMN_kernel_args_sm8x = tile_size_fwd_sm8x(params.arch == 86 || params.arch == 89, params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, params.page_table, is_varlen && params.num_splits > 1, params.softcap > 0.f, params.knew_ptr);
-         int const kBlockM = params.arch >= 90 ? std::get<0>(kBlockMN_kernel_args_sm90) : std::get<0>(kBlockMN_kernel_args_sm8x);
-         int const kBlockN = params.arch >= 90 ? std::get<1>(kBlockMN_kernel_args_sm90) : std::get<1>(kBlockMN_kernel_args_sm8x);
+         auto kBlockMN_kernel_args_sm8x = tile_size_fwd_sm8x(params.arch == 86 || params.arch == 89 || params.arch == 120, params.d_rounded, params.dv_rounded, params.is_causal, params.is_local, (params.is_e4m3 || params.is_int8) ? 1 : 2 /*element_size*/, params.page_table, is_varlen && params.num_splits > 1, params.softcap > 0.f, params.knew_ptr);
+         int const kBlockM = (params.arch >= 90 && params.arch < 120) ? std::get<0>(kBlockMN_kernel_args_sm90) : std::get<0>(kBlockMN_kernel_args_sm8x);
+         int const kBlockN = (params.arch >= 90 && params.arch < 120) ? std::get<1>(kBlockMN_kernel_args_sm90) : std::get<1>(kBlockMN_kernel_args_sm8x);
          auto stream = at::cuda::getCurrentCUDAStream().stream();
          prepare_varlen_num_blocks(params, stream, params.pack_gqa, kBlockM, kBlockN, false /*enable_pdl*/);
          CHECK_CUDA_KERNEL_LAUNCH();
@@ -821,7 +821,7 @@
      auto q_type = q.scalar_type();
      TORCH_CHECK(q_type == at::ScalarType::Half || q_type == at::ScalarType::BFloat16 || q_type == at::ScalarType::Float8_e4m3fn || q_type == torch::kInt8,
                  "FlashAttention only supports fp16, bf16, fp8_e4m3, and int8 data type");
-     if (dprops->major < 9) {
+     if ((dprops->major < 9 || dprops->major >= 12)) {
          TORCH_CHECK(q_type == at::ScalarType::Half || q_type == at::ScalarType::BFloat16,
                      "FlashAttention on Ampere/Ada cards only supports fp16 and bf16 data type");
      }
@@ -1165,7 +1165,7 @@
      // This needs to be set after get_num_splits
      at::Tensor tile_count_semaphore;  // Contains the semaphore and optionally num_splits_dynamic
      // We don't use the persistent scheduler if Split and not Varlen
-     bool const scheduler_needs_semaphore = params.arch >= 90
+     bool const scheduler_needs_semaphore = (params.arch >= 90 && params.arch < 120)
          ? (((params.is_causal || params.is_local) && (params.num_splits == 1)) || is_varlen)
          : ((params.is_causal && !is_varlen) || (is_varlen && params.num_splits > 1));
      params.varlen_sort_batches = !params.is_local; // Use this value for Sort in scheduler template
@@ -1359,7 +1359,7 @@
      TORCH_CHECK(params.num_splits == 1, "This flash attention build does not support splits.");
      #endif
      #ifdef FLASHATTENTION_DISABLE_PACKGQA
-     TORCH_CHECK(!params.pack_gqa || params.arch < 90 || (params.page_table && !params.pagedkv_tma) || params.num_splits > 1, "This flash attention build does not support pack_gqa.");
+     TORCH_CHECK(!params.pack_gqa || (params.arch < 90 || params.arch >= 120) || (params.page_table && !params.pagedkv_tma) || params.num_splits > 1, "This flash attention build does not support pack_gqa.");
      #endif
      #ifdef FLASHATTENTION_DISABLE_PAGEDKV
      TORCH_CHECK(!(params.page_table && !params.pagedkv_tma), "This flash attention build does not support paged KV.");
@@ -1490,7 +1490,8 @@
      int64_t window_size_right,
      double softcap,
      bool deterministic,
-     int64_t sm_margin
+     int64_t sm_margin,
+     std::optional<at::Tensor> block_mask_
  ) {
  
      #ifdef FLASHATTENTION_DISABLE_BACKWARD
@@ -1579,7 +1580,7 @@
                : 64));
      int const kBlockM_sm80 = head_size_rounded <= 64 ? 128 : 64;
      int const kBlockM_sm86 = head_size_rounded <= 192 ? 64 : 32;
-     int const kBlockM = arch >= 90 ? kBlockM_sm90 : (arch == 86 || arch == 89 ? kBlockM_sm86 : kBlockM_sm80);
+     int const kBlockM = (arch >= 90 && arch < 120) ? kBlockM_sm90 : (arch == 86 || arch == 89 || arch == 120 ? kBlockM_sm86 : kBlockM_sm80);
      int const kBlockN_sm90 = head_size_rounded <= 128
          ? 128
          : (head_size_rounded <= 192 ? 96 : 80);
@@ -1590,7 +1591,7 @@
          : (head_size_rounded <= 96 ? 128
             : (head_size_rounded <= 128 ? 96
                : (head_size_rounded <= 192 ? 64 : 64)));
-     int const kBlockN = arch >= 90 ? kBlockN_sm90 : (arch == 86 || arch == 89 ? kBlockN_sm86 : kBlockN_sm80);
+     int const kBlockN = (arch >= 90 && arch < 120) ? kBlockN_sm90 : (arch == 86 || arch == 89 || arch == 120 ? kBlockN_sm86 : kBlockN_sm80);
      auto round_multiple = [](int x, int m) { return (x + m - 1) / m * m; };
      int const seqlen_q_rounded = round_multiple(seqlen_q, kBlockM);
      int const seqlen_k_rounded = round_multiple(seqlen_k, kBlockN);
@@ -1753,6 +1754,16 @@
      TORCH_CHECK(params.softcap == 0.0, "This flash attention build does not support tanh softcapping.");
      #endif
  
+     // Set block sparsity mask if provided
+     if (block_mask_.has_value()) {
+         auto block_mask = block_mask_.value();
+         TORCH_CHECK(block_mask.dtype() == torch::kInt32, "block_mask must be int32");
+         TORCH_CHECK(block_mask.is_cuda(), "block_mask must be on CUDA");
+         params.block_mask_ptr = block_mask.data_ptr();
+         // block_mask shape: [B, H, N, num_words]
+         params.block_mask_num_words = block_mask.size(-1);
+     }
+
      if (total_q > 0 && total_k > 0 && num_heads_k > 0) {
          auto stream = at::cuda::getCurrentCUDAStream().stream();
          run_mha_bwd(params, stream);
@@ -1884,7 +1895,20 @@
              static_cast<int64_t>(MmaPV_is_RS), static_cast<int64_t>(IntraWGOverlap)};
  }
  
- TORCH_LIBRARY(lite_attention, m) {
+ // Wrapper function to expose tile_size_fwd_sm8x to Python
+// Returns [kBlockM, kBlockN, kNWarps, kStages, Q_in_regs]
+std::vector<int64_t> get_tile_size_fwd_sm8x(
+        bool sm86_or_89, int64_t headdim, int64_t headdim_v, bool is_causal, bool is_local,
+        int64_t element_size, bool paged_kv, bool varlen_and_split, bool softcap, bool append_kv) {
+    auto [kBlockM, kBlockN, kNWarps, kStages, Q_in_regs] = tile_size_fwd_sm8x(
+        sm86_or_89, static_cast<int>(headdim), static_cast<int>(headdim_v), is_causal, is_local,
+        static_cast<int>(element_size), paged_kv, varlen_and_split, softcap, append_kv);
+    return {static_cast<int64_t>(kBlockM), static_cast<int64_t>(kBlockN),
+            static_cast<int64_t>(kNWarps), static_cast<int64_t>(kStages),
+            static_cast<int64_t>(Q_in_regs)};
+}
+
+TORCH_LIBRARY(lite_attention, m) {
      m.def("fwd("
          "Tensor q,"
          "Tensor k,"
@@ -1950,7 +1974,8 @@
          "int window_size_right = -1,"
          "float softcap = 0.0,"
          "bool deterministic = False,"
-         "int sm_margin = 0) -> (Tensor(dq!), Tensor(dk!), Tensor(dv!), Tensor, Tensor, Tensor, Tensor, Tensor)");
+         "int sm_margin = 0,"
+         "Tensor? block_mask = None) -> (Tensor(dq!), Tensor(dk!), Tensor(dv!), Tensor, Tensor, Tensor, Tensor, Tensor)");
      m.def("fwd_combine("
          "Tensor out_partial,"
          "Tensor lse_partial,"
@@ -1992,6 +2017,17 @@
          "bool softcap = False,"
          "bool is_skipable = False,"
          "bool is_int8 = False) -> int[]", &get_tile_size_fwd_sm90);
+     m.def("get_tile_size_fwd_sm8x("
+         "bool sm86_or_89,"
+         "int headdim,"
+         "int headdim_v,"
+         "bool is_causal,"
+         "bool is_local,"
+         "int element_size = 2,"
+         "bool paged_kv = False,"
+         "bool varlen_and_split = False,"
+         "bool softcap = False,"
+         "bool append_kv = False) -> int[]", &get_tile_size_fwd_sm8x);
  }
  
  TORCH_LIBRARY_IMPL(lite_attention, CUDA, m) {
