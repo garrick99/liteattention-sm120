@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark LiteAttention on SM89 (RTX 4090).
+"""Benchmark LiteAttention on SM120 (RTX 5090).
 
 Measures:
 1. Flash Attention baseline (no skip lists)
@@ -78,7 +78,7 @@ def bench_flash_attn(B, S, H, D, causal=False):
 
 def bench_skip_list(B, S, H, D, skip_ratio=0.0, phase=True, causal=False):
     """Benchmark flash attention with skip lists."""
-    kBlockN = 128  # SM89 hdim128
+    kBlockN = 128  # SM120 hdim128
     q = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')
     k = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')
     v = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')

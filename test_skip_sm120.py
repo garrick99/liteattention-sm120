@@ -1,4 +1,4 @@
-"""Comprehensive skip list test for SM89."""
+"""Comprehensive skip list test for SM120."""
 import torch
 import lite_attention
 
@@ -7,7 +7,7 @@ fa = lite_attention._internal.flash_attn_interface.flash_attn_func
 def test_correctness(S, H, phase, causal=False):
     """Verify skip list output matches reference (no skip)."""
     B, D = 1, 128
-    kBlockN = 128  # SM89 hdim128
+    kBlockN = 128  # SM120 hdim128
     q = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')
     k = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')
     v = torch.randn(B, S, H, D, dtype=torch.bfloat16, device='cuda')
