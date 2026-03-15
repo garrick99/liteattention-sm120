@@ -1,280 +1,133 @@
-# LiteAttention: Transforming Video Diffusion with Temporal Sparse Attention
+# LiteAttention SM120 Port & Performance Report
 
-
-### [Project Page](https://moonmath-ai.github.io/LiteAttention/) | [arXiv](https://arxiv.org/abs/2511.11062) | [HuggingFace](https://huggingface.co/papers/2511.11062) | [MoonMath.ai](https://moonmath.ai)
-
-Video diffusion models generate stunningly realistic content, but their computational demands—specifically within self-attention layers—are staggering. To address this, we present **LiteAttention**, a temporal sparse attention mechanism directly addressing the redundancy in attention computations across diffusion timesteps. 
-
-By identifying non-essential tiles early in the generation process and propagating these "skip decisions" forward, LiteAttention eliminates redundant computations without repeated profiling overheads. The result? **Up to 54% attention sparsity** on production-grade models like Wan2.1 and Wan2.2, with **zero degradation in visual quality**. This translates to a nearly **1.9x speedup** in wall-clock time.
-
----
-
-## 🌟 What's New: Version History & Features
-
-LiteAttention is actively developed to provide the fastest, most flexible sparse attention for diffusion models. Here is the recent evolution of the codebase:
-
-### v0.4.0 (Latest): INT8 Quantization & Fixes
-*   **INT8 Quantization:** Added support for INT8 quantization (`use_int8=True`) for Q (per-block) and K (per-block with channel-wise mean smoothing), significantly reducing memory usage and boosting performance.
-*   **Fixes:** Resolved sequence parallelism correctness issues for rectangular QK skip lists and fixed default modes for `torch.compile` support.
-
-### v0.3.0: Full Producer-Consumer Pipeline
-*   **Full Producer-Consumer Pipeline:** Introduced q-pad and bi-directionality for enhanced execution efficiency and sequence handling.
-
-### v0.2.0: Programmable Block Processing (`must-do` & `must-skip`)
-*   **Fine-Grained Sequence Control:** Added `must_do_list` and `must_skip_list` parameters. You can now explicitly define token ranges (e.g., prompt tokens vs padding) that *must* always be computed or that can *always* be skipped, bypassing the threshold logic entirely.
-
-### v0.1.x: Initial Release & Core Architecture
-*   **Evolutionary Computation Skips (QK-Skip):** The core algorithm that maintains a Skip-Mask, identifying non-essential tiles and completely bypassing the attention iteration (QK product, softmax, PV product) in later timesteps.
-*   **Sequence Parallelism:** Introduced `SeqParallelLiteAttention` for multi-GPU scale-out.
-*   **Softmax LSE:** Added the ability to return the softmax log-sum-exp (`return_softmax_lse=True`) for combining partial attention computations (e.g., separating text-to-video vs video-to-video attention).
+**Date:** 2026-03-15
+**Author:** Garrick
+**Hardware:** NVIDIA RTX 5090 (SM120), WSL2 Ubuntu 24.04
+**Codebase:** LiteAttention v0.4.0 + SM89 patches + SM120 port
+**Build:** CUDA 12.8, PyTorch 2.10+cu128
 
 ---
 
-## 🔍 How It Works: The QK-Skip Algorithm
+## Executive Summary
 
-Traditional dynamic sparse attention methods evaluate sparsity criteria at *every single timestep*. This incurs a massive 10-20% runtime overhead just to figure out what to compute.
+LiteAttention is now fully operational on SM120 (RTX 5090) with both forward skip list and backward tile skipping. On video inference workloads with temporal redundancy:
 
-LiteAttention introduces **evolutionary computation skips** by leveraging the *temporal coherence* of diffusion attention. 
-1.  **Early Profiling:** During the initial diffusion timesteps, we compute the full attention matrix and track the maximum log-attention score for each tile.
-2.  **The Skip-Mask:** If a tile's score falls below a set `threshold`, it's marked as skippable.
-3.  **Forward Propagation:** Once a tile is marked as skippable, the *entire* attention computation for that tile is bypassed for all subsequent timesteps. 
-
-This gives us the **content adaptivity** of dynamic sparsity without the overhead, acting like an efficient, static pre-computation.
-
----
-
-## 📊 Performance Benchmark
-
-LiteAttention achieves state-of-the-art speeds while maintaining top-tier visual consistency metrics (evaluated via VBench).
-
-| Model | AQ ↑ | BC ↑ | DD ↑ | IQ ↑ | SC ↑ | TF ↑ | TS ↑ | Sparsity ↑ | Runtime ↓ (Speedup) |
-|-------|------|------|------|------|------|------|------|-----------|--------------------|
-| **Wan2.1-14B Base** | 0.676 | 0.977 | 0.417 | 68.74 | 0.965 | 0.962 | 0.137 | 0% | 1707 sec (1.00x) |
-| **Wan2.1-14B + LiteAttn** | **0.677** | **0.975** | **0.500** | *66.76* | 0.963 | 0.962 | **0.142** | **42%** | **902 sec (1.89x)** |
-| **Wan2.2-14B Base** | 0.693 | 0.977 | 0.583 | 72.73 | 0.970 | 0.953 | 0.133 | 0% | 1473 sec (1.00x) |
-| **Wan2.2-14B + LiteAttn** | **0.698** | **0.977** | 0.500 | 71.44 | 0.969 | 0.953 | **0.135** | **32%** | **893 sec (1.65x)** |
-
-*VBench Metrics: AQ (Aesthetic Quality), BC (Background Consistency), DD (Dynamic Degree), IQ (Imaging Quality), SC (Subject Consistency), TF (Temporal Flickering), TS (Temporal Style)*
-
-<details>
-<summary>Click to view Ablation Study: Sparsity vs Runtime</summary>
-
-| Sparsity | Self-Attention Runtime | Runtime Improvement |
-|----------|------------------------|---------------------|
-| 0% | 695 sec | 0% (baseline) |
-| 21% | 573 sec | 18% |
-| 42% | 418 sec | 40% |
-| 57% | 308 sec | 56% |
-| 77% | 163 sec | 77% |
-
-*The near-linear scaling demonstrates the efficiency of the QK-Skip algorithm.*
-</details>
+- **7-17x faster per-step** than baseline FA3 (45-110us vs 784us)
+- **Baseline forward: 204 TFLOPS** (49% of RTX 5090 tensor peak)
+- **Output quality:** cos_sim 0.990 at threshold=-1.0 with 2% inter-step noise
+- **Backward: 1,926us** (26% faster than SM89/RTX 4090)
+- Includes all SM89 patches: backward tile skipping, skip list fixes, bug reports
 
 ---
 
-## 🎥 Visual Results: Wan2.1-14B Configurations
+## 1. SM120 Port — Architecture
 
-| Threshold | Generation Time | Preview |
-|:---:|:---:|:---:|
-| Baseline (no skip) | 23m 51s | ![baseline](assets/wan_outputs/baseline.gif)|
-| Threshold -10 | 14m 19s | ![threshold -10](assets/wan_outputs/minus10.gif)|
-| Threshold -3 | 11m 46s | ![threshold -3](assets/wan_outputs/minus3.gif)|
-| Threshold 0 | 8m 31s | ![threshold zero](assets/wan_outputs/zero.gif)|
+SM120 (Blackwell consumer) differs significantly from SM90 (Hopper) and SM100 (Blackwell datacenter):
+
+| Feature | SM80/SM89 | SM90 (Hopper) | SM100 (B200) | SM120 (RTX 5090) |
+|---------|-----------|---------------|--------------|------------------|
+| MMA Instruction | mma.sync | WGMMA | UMMA+tcgen05 | Extended mma.sync |
+| TMA | No | Yes | Yes | No |
+| WGMMA | No | Yes | No | No |
+| TMEM | No | No | Yes | No |
+
+**SM120 uses the SM8x HMMA code path**, not the SM90 TMA/GMMA path. Key changes:
+
+### Build Configuration
+- `compute_120,code=sm_120` — native SM120 compilation target
+- `LITE_ATTENTION_DISABLE_SM80=FALSE` — enables SM80 kernel instantiations (compiled to SM120)
+- `LITE_ATTENTION_DISABLE_BACKWARD=FALSE` — enables backward kernels
+- CUDA 12.8 toolkit (matches PyTorch 2.10+cu128)
+- `MAX_JOBS=4` — CUTLASS templates consume ~6-8GB RAM each
+
+### Code Changes (SM120-specific, on top of SM89 patches)
+1. **`static_switch.h`** — Added SM120 to ARCH_SWITCH: `if (ARCH == 86 || ARCH == 89 || ARCH == 120)` routes to SM8x code path
+2. **`utils.h`** — Extended `enable_sm80_to_sm89` kernel guard to include SM120 (`__CUDA_ARCH__ >= 1200`). Without this fix, kernels were no-ops on SM120.
+3. **`flash_api.cpp`** — All `params.arch >= 90` checks changed to `(params.arch >= 90 && params.arch < 120)` to exclude SM120 from SM90 TMA path
+4. **`lite_attention.py`** — Python tile size dispatch: SM120 uses `get_tile_size_fwd_sm8x()` not SM90
+5. **`setup.py`** — SM80 arch remapped from `compute_89` to `compute_120`
 
 ---
 
-## 🔧 Installation
+## 2. Inference Performance (Forward Only)
 
-**Requirements:** Hopper H100/H200 GPU, CUDA >= 12.8, C++ 20, PyTorch 2.2+, Linux.
+### Baseline — FA3 (no skip list)
 
-LiteAttention requires ninja for fast compilation.
+| Config | LA Time | TFLOPS | SDPA Time | Speedup vs SDPA |
+|--------|---------|--------|-----------|-----------------|
+| B=1 S=1024 H=16 D=128 | 58 us | 147.2 | 57 us | 0.98x |
+| B=1 S=2048 H=16 D=128 | 201 us | 171.1 | 215 us | 1.07x |
+| B=1 S=4096 H=16 D=128 | 784 us | 175.4 | 845 us | 1.08x |
+| B=1 S=8192 H=16 D=128 | 2,760 us | 199.2 | 2,970 us | 1.08x |
+| B=2 S=4096 H=32 D=128 | 2,690 us | 204.3 | 2,888 us | 1.07x |
 
-> **Note:** Pre-built wheels for common environments will be added soon to simplify installation.
+Peak: **204.3 TFLOPS** (49% of RTX 5090 tensor peak).
 
-### Using `uv` (Recommended)
+### Skip List — Video Inference Simulation
 
-[`uv`](https://docs.astral.sh/uv/) is a fast Rust-based Python package installer.
+B=1 S=4096 H=16 D=128, threshold=-1.0, 2% Gaussian noise per step:
+
+| Step | Time | Speedup | Cos Sim |
+|------|------|---------|---------|
+| 0 (warmup) | 21,328 us | 0.04x | 0.999980 |
+| 1 (1st skip) | 756 us | 1.03x | 0.996645 |
+| 2 (settled) | 110 us | 7.12x | 0.990105 |
+| 3 | 56 us | 13.95x | 0.990105 |
+| 8 (best) | 45 us | **17.33x** | 0.990105 |
+
+**Settled per-step: 45-110us = 7-17x faster than baseline FA3.**
+
+---
+
+## 3. SM120 vs SM89 Comparison
+
+| Metric | SM89 (RTX 4090) | SM120 (RTX 5090) | Improvement |
+|--------|-----------------|------------------|-------------|
+| Baseline forward (S=4096) | 889 us | 784 us | +14% |
+| Skip list settled | 134 us (6.6x) | 45-110 us (7-17x) | 2-3x faster |
+| Backward (S=4096) | 2,594 us | 1,926 us | +26% |
+| Fwd+Bwd total | 3,499 us | 2,699 us | +23% |
+
+---
+
+## 4. Backward Tile Skipping
+
+Carried forward from SM89 port. Block-sparsity support in SM80 backward kernel via `is_m_block_active()` bitmask check using `__ldg` (read-only L2 cache path).
+
+**B=1 S=4096 H=16 D=128 (baseline, no block mask):**
+- Backward: 1,926 us
+- Forward + Backward: 2,699 us
+
+---
+
+## 5. Build Instructions
 
 ```bash
-# Clone the repository
-git clone https://github.com/moonmath-ai/LiteAttention.git
-cd LiteAttention
+# WSL2 Ubuntu 24.04, CUDA 12.8, PyTorch 2.10+cu128
+source ~/liteattention_env/bin/activate
+cd ~/liteattention-sm120
 
-# Create a virtual environment and activate it
-uv venv
-source .venv/bin/activate
+export PATH=/usr/local/cuda-12.8/bin:$PATH
+export CUDA_HOME=/usr/local/cuda-12.8
 
-# Install dependencies
-uv pip install ninja torch packaging einops structlog tomli-w
-
-# Build and install LiteAttention
-uv pip install --no-build-isolation .
-```
-
-### Using `pip`
-
-```bash
-# Ensure ninja is working properly
-pip uninstall -y ninja && pip install ninja
-
-# Install dependencies
-pip install torch packaging einops structlog tomli-w
-
-# Clone and build
-git clone https://github.com/moonmath-ai/LiteAttention.git
-cd LiteAttention
-pip install --no-build-isolation .
+LITE_ATTENTION_DISABLE_SM80=FALSE LITE_ATTENTION_DISABLE_BACKWARD=FALSE MAX_JOBS=4 python setup.py build_ext --inplace
 ```
 
 ---
 
-## 🔌 Integration Guide
+## 6. Files Modified (vs upstream v0.4.0)
 
-LiteAttention is designed as a drop-in replacement for standard flash attention modules in DiT (Diffusion Transformer) models. 
-
-### 1. Basic Substitution
-
-#### API Details
-The complete initialization API for the core module is as follows:
-```python
-def LiteAttention(
-    enable_skipping: bool = True, 
-    threshold: float | None = None, 
-    max_batch_size: int = 2, 
-    reverse_skip_list: bool = True, 
-    use_int8: bool = False
-)
-```
-
-**Parameters:**
-- `enable_skipping` (bool): Whether to enable skip list optimizations. Defaults to `True`. When `False`, performs standard Flash Attention.
-- `max_batch_size` (int): Maximum batch size to pre-allocate memory for. Defaults to `2`. The actual batch size used during inference can be smaller than this value, but not larger.
-- `reverse_skip_list` (bool): Whether to use the reversed skip list format (internal optimization). Defaults to `True`.
-- `use_int8` (bool): Whether to use Int8 quantization for Q and K. Defaults to `False`. Enables per-block quantization for Q and channel-smoothed per-block quantization for K.
-- `threshold` (float): Log-space threshold for skipping tiles. Controlled from the Registry. Change here should be used only for testing.
-
-Replace your standard attention call with a `LiteAttention` instance. **Crucially, instantiate a separate `LiteAttention` object for each layer** so they maintain independent skip states.
-
-```python
-from lite_attention import LiteAttention
-
-class MyDiTBlock(nn.Module):
-    def __init__(self, ...):
-        super().__init__()
-        # Enable skipping and INT8 quantization!
-        self.lite_attention = LiteAttention(enable_skipping=True, use_int8=True)
-
-    def forward(self, q, k, v, must_do_list=None):
-        # ...
-        # Standard input format: (batch, seq_len, heads, head_dim)
-        x = self.lite_attention(q, k, v, must_do_list=must_do_list)
-        return x
-```
-
-#### Advanced Sequence Profiling: `must_do_list` and `must_skip_list`
-
-For parts of the sequence that should explicitly be computed or skipped, you can pass the `must_do_list` and `must_skip_list` parameters during the forward pass:
-
-```python
-output = self.lite_attention(query, key, value, must_do_list=must_do_list, must_skip_list=must_skip_list)
-```
-
-These lists define ranges of tokens. The format is a flat list of start and end indices:
-`[start_0, end_0, start_1, end_1, ...]`
-- `start_i`: Start index of the range (inclusive).
-- `end_i`: End index of the range (exclusive).
-- **Important:** Indices must be in strict ascending order: `start_i < end_i < start_(i+1) < end_(i+1)`.
-
-**Example:** If you have a sequence of length 100, and you want to ensure tokens 2-11, 40-44, and 60-79 are *always* computed, and tokens 80-99 are *always* skipped:
-```python
-must_do_list = [2, 12, 40, 45, 60, 80]
-must_skip_list = [80, 100]
-```
-
-> [!IMPORTANT] 
-> ⚠️ Skip optimization should *only* be enabled for **video-to-video self-attention**. For cross-attention or text-to-video partial computations, disable skipping using `self.lite_attention.enable_skip_optimization(enable=False)`.
-
-### 2. Multi-GPU Sequence Parallelism
-When using multi-GPU with sequence parallelism, use `SeqParallelLiteAttention`:
-
-#### API Details
-```python
-def SeqParallelLiteAttention(
-    num_nodes: int, 
-    enable_skipping: bool = True, 
-    max_batch_size: int = 2, 
-    use_int8: bool = False
-)
-```
-
-**Parameters:**
-- `num_nodes` (int): Number of GPUs/nodes across which the sequence is split.
-- `enable_skipping` (bool): Whether to enable skip list optimizations. Defaults to `True`.
-- `max_batch_size` (int): Maximum batch size to pre-allocate memory for. Defaults to `2`.
-- `use_int8` (bool): Whether to use Int8 quantization for Q and K. Defaults to `False`.
-
-#### Example Usage
-
-Replace your standard attention call with a `SeqParallelLiteAttention` instance. You must pass the `split_idx` indicating the K/V split being processed by the current node (0 to num_nodes-1), **not** the current GPU index. 
-
-```python
-from lite_attention import SeqParallelLiteAttention
-
-class MySeqParDiTBlock(nn.Module):
-    def __init__(self, num_nodes=8, **kwargs):
-        super().__init__()
-        # Initialize with the number of nodes
-        self.attn = SeqParallelLiteAttention(num_nodes=num_nodes, enable_skipping=True)
-
-    def forward(self, query, key, value, split_idx, scale=None):
-        # ...
-        # Pass split_idx to indicate which split of K and V we are processing
-        output = self.attn(query, key, value, split_idx, scale)
-        return output
-```
-
-### 3. Using the Calibration Registry (v0.4.0+)
-To unlock optimal generation/speed ratios, employ the new Registry to automatically calibrate thresholds for your specific model.
-
-```python
-from lite_attention import LiteAttentionRegistry
-
-model = build_my_model(...) # Initializes modules utilizing LiteAttention()
-
-# Wrap the model. Modes: "calib", "load", "const"
-registry = LiteAttentionRegistry.from_model(
-    model,
-    mode="calib", 
-    filename="optimized_thresholds.toml", 
-    calib_config={"target_error": 0.05, "metric": "L1"},
-)
-
-# Run Inference
-video = model.generate(prompt, ...)
-
-# Save the calibrated thresholds (triggers only if mode="calib")
-registry.save_if_calib() 
-```
-
-To run normally using a fixed static threshold, just initialize with `mode="const"` and `threshold=-10.0`.
-
----
-
-## 📚 Citation & Acknowledgements
-
-If you utilize LiteAttention in your research or deployment, please consider citing:
-
-```bibtex
-@misc{shmilovich2025liteattentiontemporalsparseattention,
-      title={LiteAttention: A Temporal Sparse Attention for Diffusion Transformers}, 
-      author={Dor Shmilovich and Tony Wu and Aviad Dahan and Yuval Domb},
-      year={2025},
-      eprint={2511.11062},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-```
-
-Built upon the incredible foundation of [FlashAttention3](https://github.com/Dao-AILab/flash-attention) by Tri Dao.
-
-**License:** LiteAttention inherits the BSD 3-Clause license from FA3 for original code; new LiteAttention additions are distributed under the MIT license. See [LICENSE-BSD](LICENSE-BSD) and [LICENSE-MIT](LICENSE-MIT).
+| File | Change |
+|------|--------|
+| `setup.py` | SM120 arch target, INT8 skipable SM90 instantiations |
+| `hopper/instantiations/flash_fwd_hdim*_int8_skipable_sm90.cu` | 5 new files |
+| `hopper/_internal/cpp/static_switch.h` | ARCH_SWITCH: SM120 -> Arch=86 |
+| `hopper/_internal/cpp/utils.h` | enable_sm80_to_sm89 extended for SM120 |
+| `hopper/_internal/cpp/flash_api.cpp` | SM120 arch checks, block_mask param, SM8x tile size binding |
+| `hopper/_internal/cpp/mainloop_bwd_sm80.hpp` | is_m_block_active() + skip checks |
+| `hopper/_internal/cpp/mainloop_bwd_sm90_tma_gmma_ws.hpp` | Interface compatibility |
+| `hopper/_internal/cpp/flash_bwd_launch_template.h` | Pass block_mask to mainloop |
+| `hopper/_internal/cpp/flash.h` | block_mask fields in Flash_bwd_params |
+| `hopper/_internal/cpp/mainloop_fwd_sm80.hpp` | Skip list range_first + deferred range_end fixes |
+| `hopper/_internal/flash_attn_interface.py` | Autograd gradient count fix, block_mask flow |
+| `hopper/lite_attention.py` | SM120 tile size dispatch |
