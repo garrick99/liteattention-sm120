@@ -204,6 +204,13 @@ class LiteAttention(nn.Module, ConfigurableModule):
         # Internal skip list management
         self._skip_list = None  # Shape: [2, max_batch_size, heads, qtiles, ktiles+2]
         self._phase = 0  # Alternates between 0 and 1 for double-buffering
+        # SM120 (Blackwell consumer) has a bug in reverse skip list iteration.
+        # Force forward iteration on SM120 until root cause is fixed.
+        import torch as _torch
+        if _torch.cuda.is_available():
+            _sm = _torch.cuda.get_device_capability()[0] * 10 + _torch.cuda.get_device_capability()[1]
+            if _sm == 120 and reverse_skip_list:
+                reverse_skip_list = False
         self.reverse_skip_list = reverse_skip_list  # Controls skip list format
         self.use_int8 = use_int8  # Whether using int8 quantization
 
