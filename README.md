@@ -1,7 +1,7 @@
 # LiteAttention SM120 Port & Performance Report
 
 **Date:** 2026-03-15
-**Author:** Garrick
+**Author:** garrick99
 **Hardware:** NVIDIA RTX 5090 (SM120), WSL2 Ubuntu 24.04
 **Codebase:** LiteAttention v0.4.0 + SM89 patches + SM120 port
 **Build:** CUDA 12.8, PyTorch 2.10+cu128
