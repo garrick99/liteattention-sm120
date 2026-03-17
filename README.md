@@ -12,7 +12,7 @@
 
 LiteAttention is now fully operational on SM120 (RTX 5090) with both forward skip list and backward tile skipping. On video inference workloads with temporal redundancy:
 
-- **7-17x faster per-step** than baseline FA3 (45-110us vs 784us)
+- **7-17x faster per-step** than baseline FA3 on RTX 5090 (45-110us vs 784us measured on same hardware)
 - **Baseline forward: 204 TFLOPS** (49% of RTX 5090 tensor peak)
 - **Output quality:** cos_sim 0.990 at threshold=-1.0 with 2% inter-step noise
 - **Backward: 1,926us** (26% faster than SM89/RTX 4090)
