@@ -15,7 +15,7 @@ namespace flash
     //   - Reverse: whether to read the list in reverse
     //   - Phase: only used when IsSkipList=true, controls step direction
     // ============================================================================
-    template <bool IsSkipList, bool Reverse, bool Phase = true>
+    template <bool IsSkipList, bool Reverse, bool Phase = true, bool ApplyStepOffset = true>
     struct ListReader
     {
         const int16_t *list_ptr;
@@ -74,8 +74,9 @@ namespace flash
                 start_idx = flash::warp_uniform(list_ptr[read_idx]);
                 end_idx = flash::warp_uniform(list_ptr[read_idx + 1]);
             } else {
-                start_idx = flash::warp_uniform(list_ptr[read_idx] + step);
-                end_idx = flash::warp_uniform(list_ptr[read_idx - 1] + step);
+                static constexpr int offset = ApplyStepOffset ? step : 0;
+                start_idx = flash::warp_uniform(list_ptr[read_idx] + offset);
+                end_idx = flash::warp_uniform(list_ptr[read_idx - 1] + offset);
             }
         }
 
@@ -150,8 +151,8 @@ namespace flash
     template <bool ReverseMustDoList>
     using MustDoListReader = ListReader<false, ReverseMustDoList, !ReverseMustDoList>;
 
-    template <bool ReverseSkipList, bool Phase = true>
-    using SkipListReader = ListReader<true, ReverseSkipList, Phase>;
+    template <bool ReverseSkipList, bool Phase = true, bool ApplyStepOffset = true>
+    using SkipListReader = ListReader<true, ReverseSkipList, Phase, ApplyStepOffset>;
 
     // ============================================================================
     // Helper struct for writing skip lists

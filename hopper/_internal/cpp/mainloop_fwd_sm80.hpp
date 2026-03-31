@@ -635,7 +635,8 @@ struct CollectiveMainloopFwdSm80 {
         // Returns per-warp skip decision via shared memory coordination.
         auto fwd_step_skip = [&](int const cur_n_block, int const next_n_block, bool const has_next,
                                  auto mask_fn, auto is_first_iter_type, auto check_inf_type,
-                                 flash::SkipListWriter<Phase == false, HasMustDoList> &skip_writer) {
+                                 flash::SkipListWriter<Phase == false, HasMustDoList> &skip_writer,
+                                 bool is_must_do = false) {
             static constexpr bool Is_first_iter = decltype(is_first_iter_type)::value;
             static constexpr bool Check_inf = decltype(check_inf_type)::value;
             Tensor tSrS = partition_fragment_C(tiled_mma, select<0, 1>(TileShape_MNK{}));
@@ -681,7 +682,9 @@ struct CollectiveMainloopFwdSm80 {
                 atomicAnd(&shared_storage.skip_flag_sm80, int(warp_skip));
             }
             __syncthreads();
-            bool const tile_skip = shared_storage.skip_flag_sm80;
+            bool tile_skip = shared_storage.skip_flag_sm80;
+            // Must-do tiles are never skipped
+            if (is_must_do) { tile_skip = false; }
 
             // Record skip decision for next timestep
             if (thread_idx == 0) {
@@ -753,12 +756,18 @@ struct CollectiveMainloopFwdSm80 {
             // Uses single-stage pipeline within each range.
             // Detects skips and writes to SkipListWriter for next timestep.
             // ============================================================
-            flash::SkipListReader<ReverseSkipList, Phase> skip_reader;
+            flash::SkipListReader<ReverseSkipList, Phase, /*ApplyStepOffset=*/false> skip_reader;
             flash::SkipListWriter<Phase == false, HasMustDoList> skip_writer;
 
             // Initialize skip list reader/writer
             skip_reader.template init<TileShape_MNK>(params, bidb, bidh, m_block);
             skip_writer.template init<TileShape_MNK>(params, bidb, bidh, m_block);
+
+            // Initialize must-do list reader (forces computation of specific tiles)
+            flash::MustDoListReader<!Phase> must_do_reader;
+            if constexpr (HasMustDoList) {
+                must_do_reader.template init<TileShape_MNK>(params, bidb, bidh, m_block);
+            }
 
             // Build a flat list of n_blocks to process from skip list ranges.
             // The skip list reader gives us non-skipped ranges as [start, end) pairs.
@@ -840,14 +849,20 @@ struct CollectiveMainloopFwdSm80 {
                         // Non-causal inner tiles: no masking (empty body, compiled away)
                     };
 
+                    // Check must-do list for current tile
+                    bool is_must_do = false;
+                    if constexpr (HasMustDoList) {
+                        is_must_do = must_do_reader.find_range(n_block);
+                    }
+
                     if (is_first_iter) {
                         fwd_step_skip(n_block, next_n_block, has_next,
-                                      mask_fn, cute::true_type{}, cute::true_type{}, skip_writer);
+                                      mask_fn, cute::true_type{}, cute::true_type{}, skip_writer, is_must_do);
                         is_first_iter = false;
                     } else {
                         fwd_step_skip(n_block, next_n_block, has_next,
                                       mask_fn, cute::false_type{},
-                                      cute::bool_constant<Is_causal || Is_local>{}, skip_writer);
+                                      cute::bool_constant<Is_causal || Is_local>{}, skip_writer, is_must_do);
                     }
 
                     // Now record the deferred range end (after fwd_step_skip has
